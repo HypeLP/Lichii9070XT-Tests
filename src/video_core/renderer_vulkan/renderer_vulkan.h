@@ -64,7 +64,7 @@ public:
 
     [[nodiscard]] VideoCore::FrameGenStatus GetFrameGenStatus() const override {
 #ifdef HAS_LSFG
-        return frame_gen.CurrentStatus();
+        return frame_gen.CurrentStatus(present_manager.GeneratedPresents());
 #else
 #ifdef EGLANTINE_STREAMLINE
         if (Streamline::FrameGenActive()) {

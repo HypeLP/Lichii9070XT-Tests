@@ -46,9 +46,9 @@ public:
 
     void GenerateInto(const Device& device, Frame* destination, size_t generation);
 
-    [[nodiscard]] VideoCore::FrameGenStatus CurrentStatus() const {
+    [[nodiscard]] VideoCore::FrameGenStatus CurrentStatus(u64 presented) const {
         return {.state = state.load(std::memory_order_relaxed),
-                .generated_frames = generated_frames.load(std::memory_order_relaxed)};
+                .generated_frames = presented};
     }
 
 private:
@@ -81,7 +81,6 @@ private:
     bool unavailable{};
     bool dumped{};
     std::atomic<VideoCore::FrameGenState> state{VideoCore::FrameGenState::Pending};
-    std::atomic<u64> generated_frames{};
     struct {
         std::chrono::steady_clock::time_point since{};
         u64 frames{};

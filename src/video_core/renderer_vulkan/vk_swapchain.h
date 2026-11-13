@@ -56,7 +56,7 @@ public:
     bool AcquireNextImage(bool may_flush = true);
 
     /// Presents the rendered image to the swapchain.
-    void Present(VkSemaphore render_semaphore);
+    bool Present(VkSemaphore render_semaphore);
 
     /// Returns true when the swapchain needs to be recreated.
     bool NeedsRecreation() const {

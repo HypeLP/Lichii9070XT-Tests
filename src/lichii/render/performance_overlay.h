@@ -44,6 +44,7 @@ private:
     QPoint m_drag_start_pos;
 
     std::optional<double> m_fps;
+    double m_generatedFps{};
     /// The last 5 s of 500 ms fps readings, for min/median/max
     std::deque<float> m_fpsSamples;
     std::optional<double> m_frameMs;

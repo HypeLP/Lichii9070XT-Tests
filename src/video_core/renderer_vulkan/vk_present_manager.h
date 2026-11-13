@@ -45,6 +45,7 @@ struct Frame {
     vk::Semaphore render_ready;
     vk::Fence present_done;
     bool storage_capable{};
+    bool generated{};
     /// Time the present thread leaves before presenting the next frame. Frame generation sets it
     /// on generated frames, so they share the screen time evenly with the real ones.
     std::chrono::nanoseconds present_spacing{};
@@ -94,6 +95,9 @@ public:
 
     /// How many additional frames can be queued without stalling the render thread
     [[nodiscard]] size_t MaxExtraFrames() const;
+    [[nodiscard]] u64 GeneratedPresents() const {
+        return generated_presents.load(std::memory_order_relaxed);
+    }
 
     [[nodiscard]] std::size_t SwapchainImageCount() const { return swapchain_image_count; }
     [[nodiscard]] VkFormat SwapchainImageFormat() const { return swapchain_image_format; }
@@ -108,6 +112,7 @@ private:
     void CopyToSwapchain(Frame* frame);
 
     void CopyToSwapchainImpl(Frame* frame);
+    std::atomic<u64> generated_presents{};
 
     // Returns false after discarding the frame if creation or transfer cannot proceed.
     bool RecreateSwapchain(Frame* frame);

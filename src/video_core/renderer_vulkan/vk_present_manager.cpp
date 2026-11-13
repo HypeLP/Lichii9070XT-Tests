@@ -206,7 +206,7 @@ void PresentManager::LogPacing(const Frame* frame, std::chrono::steady_clock::du
     if (!Settings::values.frame_gen.GetValue()) {
         return;
     }
-    const bool generated = frame->present_spacing.count() != 0;
+    const bool generated = frame->generated;
     ++(generated ? pacing_log.generated : pacing_log.real);
     pacing_log.spacing += frame->present_spacing;
     pacing_log.present_time += took;
@@ -257,6 +257,7 @@ Frame* PresentManager::GetRenderFrame() {
     frame->present_done.Reset();
     frame->color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     frame->present_spacing = {};
+    frame->generated = false;
 #ifdef EGLANTINE_STREAMLINE
     frame->frame_gen = false;
 #endif
@@ -775,7 +776,9 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame) {
         });
     }
 #endif
-    swapchain.Present(render_semaphore);
+    if (swapchain.Present(render_semaphore) && frame->generated) {
+        generated_presents.fetch_add(1, std::memory_order_relaxed);
+    }
 #ifdef EGLANTINE_STREAMLINE
     if (frame->frame_gen) {
         Streamline::FrameGenAfterPresent(frame->frame_gen_frame.index);

@@ -327,6 +327,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
         Frame* generated = present_manager.GetRenderFrame();
         generated->color_space = output.color_space;
         generated->present_spacing = spacing;
+        generated->generated = true;
         blit_swapchain.PrepareFrame(device, generated, render_window.GetFramebufferLayout());
         if (amd_mode) {
             amd_frame_generation.CopyOutput(*generated->image);

@@ -327,7 +327,6 @@ void FrameGen::Process(const Device& device, Frame* frame, VkFormat format,
     const bool warm = plan.warm && count + 1 >= LSFG_REQUIRED_FRAMES;
     warm_streak = warm ? warm_streak + 1 : 0;
     generated = warm && warm_streak >= LSFG_RECURRENCE_FRAMES && plan.generations > 0;
-    generated_frames.fetch_add(GeneratedFrameCount(), std::memory_order_relaxed);
     LogActivity();
 
     const bool use_fsr3 = type == Settings::FrameGenType::Fsr3;
@@ -407,7 +406,6 @@ void FrameGen::NoteAmdFrame(bool failed, bool presented, VkFormat format) {
         SetState(VideoCore::FrameGenState::AmdFrameGenUnavailable, format);
     } else if (presented) {
         SetState(VideoCore::FrameGenState::Running, format);
-        generated_frames.fetch_add(1, std::memory_order_relaxed);
     } else if (state.load(std::memory_order_relaxed) != VideoCore::FrameGenState::Running ||
                Settings::values.frame_gen_type.GetValue() != built_type) {
         SetState(VideoCore::FrameGenState::Pending, format);

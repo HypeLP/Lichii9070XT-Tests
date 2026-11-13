@@ -139,6 +139,7 @@ void PerformanceOverlay::updateStats(const Core::PerfStatsResults& results,
     }
 
     m_fps.reset();
+    m_generatedFps = m_mainWindow->FrameGenFps();
     if (!std::isnan(results.average_game_fps)) {
         m_fps = results.average_game_fps;
         m_fpsSamples.push_back(static_cast<float>(std::round(*m_fps)));
@@ -211,9 +212,6 @@ void PerformanceOverlay::updateStats(const Core::PerfStatsResults& results,
     if (const auto& scaling = Settings::values.resolution_info; scaling.active) {
         tags << QStringLiteral("%1×").arg(scaling.up_factor, 0, 'g', 3);
     }
-    if (const double generated = m_mainWindow->FrameGenFps(); generated >= 0.5) {
-        tags << tr("FG +%1").arg(std::round(generated), 0, 'f', 0);
-    }
     m_tags = tags.join(QStringLiteral("  "));
 
     update();
@@ -238,12 +236,19 @@ void PerformanceOverlay::paintEvent(QPaintEvent* event) {
 
     // Header: the big fps number on the left, frame time and CPU/GPU % on the right.
     const qreal fps_baseline = Baseline(fps_font, PaddingTop, HeaderHeight);
+    const bool show_fg = m_fps && m_generatedFps >= 0.5;
+    const double fps = m_fps.value_or(0.0) + (show_fg ? m_generatedFps : 0.0);
     const std::vector<Run> fps_runs{
-        {m_fps ? QString::number(std::round(*m_fps), 'f', 0) : QStringLiteral("—"), fps_font, text},
+        {m_fps ? QString::number(std::round(fps), 'f', 0) : QStringLiteral("—"), fps_font, text},
     };
     DrawRuns(painter, PaddingX, fps_baseline, fps_runs);
-    DrawRuns(painter, PaddingX + Width(fps_runs) + 6, fps_baseline,
-             {{QStringLiteral("fps"), small_font, muted}});
+    const qreal label_x = PaddingX + Width(fps_runs) + 6;
+    DrawRuns(painter, label_x, fps_baseline, {{QStringLiteral("fps"), small_font, muted}});
+    if (show_fg) {
+        DrawRuns(painter, label_x, fps_baseline - 16,
+                 {{tr("%1 + %2 FG").arg(std::round(*m_fps), 0, 'f', 0)
+                                     .arg(std::round(m_generatedFps), 0, 'f', 0), small_font, muted}});
+    }
 
     const qreal right = PaddingX + ContentWidth;
     const qreal right_top = PaddingTop + (HeaderHeight - 34) / 2;
