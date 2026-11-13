@@ -11,7 +11,6 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "video_core/fsr.h"
-#include "video_core/renderer_vulkan/vk_amd_frame_generation.h"
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
 #include "video_core/renderer_vulkan/vk_fsr4_upscaler.h"
@@ -35,6 +34,10 @@
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
+
+#ifdef _WIN32
+#include "video_core/renderer_vulkan/vk_amd_frame_generation.h"
+#endif
 
 namespace Vulkan {
 namespace {
@@ -933,7 +936,7 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
                             const Matrix& current, const Matrix& previous,
                             const OcarinaActorMesh& mesh, VkImage depth_image, u64 frame,
                             std::array<f32, 2> jitter, [[maybe_unused]] VkExtent2D depth_extent,
-                            AmdFrameGeneration* frame_generation) {
+                            [[maybe_unused]] AmdFrameGeneration* frame_generation) {
     auto& state = *impl;
     if (state.last_frame == frame || state.Failed()) {
         return false;
@@ -1094,11 +1097,13 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
                      fsr_reset, bias_view != VK_NULL_HANDLE, jitter[0], jitter[1]);
         }
     }
+#ifdef _WIN32
     if (frame_generation && depth_extent.width == extent.width &&
         depth_extent.height == extent.height) {
         frame_generation->Prepare(depth_image, *resources.motion, extent, current, jitter, frame,
                                   reset);
     }
+#endif
     state.output_fsr4 = used_fsr4;
     // A resize can submit the inputs before recording evaluation, so keep the later tick.
     resources.tick = state.scheduler.CurrentTick();
