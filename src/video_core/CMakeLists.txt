@@ -568,8 +568,8 @@ target_link_options(video_core PRIVATE ${FFmpeg_LDFLAGS})
 
 add_dependencies(video_core host_shaders)
 target_include_directories(video_core PRIVATE ${HOST_SHADERS_INCLUDE})
-# AMD's FFX API headers (MIT), for calling AMD's FSR 4 runtime (vk_fsr4_upscaler.cpp).
-target_include_directories(video_core PRIVATE ${CMAKE_SOURCE_DIR}/externals/ffx-api)
+# AMD's FFX API headers (MIT) for FSR upscaling and frame generation.
+target_include_directories(video_core SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/externals/ffx-api)
 if (WIN32)
     # Checks AMD's downloaded FSR 4 runtime (vulkan_common/ffx_runtime.cpp).
     target_link_libraries(video_core PRIVATE bcrypt wintrust crypt32)
