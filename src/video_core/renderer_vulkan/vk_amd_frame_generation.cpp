@@ -302,7 +302,7 @@ void AmdFrameGeneration::Prepare([[maybe_unused]] VkImage depth, [[maybe_unused]
     std::ranges::copy(pose->forward, prepare.cameraForward);
 
     state.scheduler.RequestOutsideRenderPassOperationContext();
-    state.scheduler.Record([&state, config, prepare, depth, motion](vk::CommandBuffer cmdbuf) mutable {
+    state.scheduler.Record([&state, config, prepare, depth, motion](vk::CommandBuffer cmdbuf) {
         if (!state.Check(state.api->configure(&state.context, &config.header), "configure")) {
             return;
         }
@@ -314,8 +314,9 @@ void AmdFrameGeneration::Prepare([[maybe_unused]] VkImage depth, [[maybe_unused]
         };
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, {}, {}, before);
-        prepare.commandList = reinterpret_cast<void*>(*cmdbuf);
-        state.Check(state.api->dispatch(&state.context, &prepare.header), "prepare");
+        auto recorded = prepare;
+        recorded.commandList = reinterpret_cast<void*>(*cmdbuf);
+        state.Check(state.api->dispatch(&state.context, &recorded.header), "prepare");
         const std::array after{
             Barrier(depth, DEPTH, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT),
