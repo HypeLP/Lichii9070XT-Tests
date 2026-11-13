@@ -5509,6 +5509,9 @@ void MainWindow::UpdateFrameGenButton() {
         break;
     case VideoCore::FrameGenState::NvidiaFrameGen:
         break;
+    case VideoCore::FrameGenState::AmdFrameGenUnavailable:
+        unavailable = tr("AMD FSR Frame Generation is unavailable. See the Vulkan log.");
+        break;
     }
 
     if (!unavailable.isEmpty()) {

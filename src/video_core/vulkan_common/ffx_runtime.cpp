@@ -179,6 +179,7 @@ std::shared_ptr<const Api> Acquire() {
     loaded->destroy_context =
         reinterpret_cast<PfnFfxDestroyContext>(GetProcAddress(module, "ffxDestroyContext"));
     loaded->query = reinterpret_cast<PfnFfxQuery>(GetProcAddress(module, "ffxQuery"));
+    loaded->configure = reinterpret_cast<PfnFfxConfigure>(GetProcAddress(module, "ffxConfigure"));
     loaded->dispatch = reinterpret_cast<PfnFfxDispatch>(GetProcAddress(module, "ffxDispatch"));
     if (!loaded->create_context || !loaded->destroy_context || !loaded->query ||
         !loaded->dispatch) {
@@ -193,6 +194,19 @@ std::shared_ptr<const Api> Acquire() {
                                          }};
     current = shared;
     return shared;
+}
+
+std::shared_ptr<const Api> AcquireFrameGeneration() {
+    const File& file = FRAME_GENERATION_FILE;
+    const auto path = Folder() / file.name;
+    std::error_code ec;
+    if (std::filesystem::file_size(path, ec) != file.size ||
+        !HasSha256(path, file.sha256) || !IsSignedByAmd(path)) {
+        LOG_WARNING(Render_Vulkan, "AMD FSR Frame Generation: missing or invalid {}",
+                    Common::FS::PathToUTF8String(path));
+        return nullptr;
+    }
+    return Acquire();
 }
 
 #else

@@ -14,6 +14,7 @@
 
 namespace Vulkan {
 
+class AmdFrameGeneration;
 class DescriptorPool;
 class Device;
 class MemoryAllocator;
@@ -60,7 +61,7 @@ public:
                 VkExtent2D output_extent, VkExtent2D target_extent, const std::array<f32, 16>& current,
                 const std::array<f32, 16>& previous, const OcarinaActorMesh& mesh,
                 VkImage depth_image, u64 frame, std::array<f32, 2> jitter = {},
-                VkExtent2D depth_extent = {});
+                VkExtent2D depth_extent = {}, AmdFrameGeneration* frame_generation = nullptr);
 
 private:
     struct Impl;

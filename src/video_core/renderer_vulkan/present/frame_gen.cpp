@@ -33,6 +33,9 @@ constexpr u32 LSFG_RECURRENCE_FRAMES = 2;
 constexpr auto ACTIVITY_LOG_INTERVAL = std::chrono::seconds(10);
 
 [[nodiscard]] std::string ModeText(Settings::FrameGenType active) {
+    if (active == Settings::FrameGenType::AmdFsr) {
+        return "AMD FSR Frame Generation 2x";
+    }
     const char* type = active == Settings::FrameGenType::Fsr3 ? "FSR3" : "LSFG";
     const u32 target_rate = Settings::values.frame_gen_target_rate.GetValue();
     if (target_rate != 0) {
@@ -261,6 +264,18 @@ void FrameGen::Process(const Device& device, Frame* frame, VkFormat format,
         chosen == Settings::FrameGenType::NvidiaDlssG
             ? VideoCore::ActiveFrameGenType(chosen, DlssgBlocked())
             : chosen;
+    if (type == Settings::FrameGenType::AmdFsr) {
+        if (!Settings::values.frame_gen.GetValue()) {
+            SetState(VideoCore::FrameGenState::Pending, format);
+        }
+        if (chain || fsr3_chain) {
+            scheduler.Finish();
+            chain.reset();
+            fsr3_chain.reset();
+        }
+        unavailable = false;
+        return;
+    }
     if (type == Settings::FrameGenType::Lsfg && !shaders) {
         shaders.emplace(device);
     }
@@ -387,6 +402,19 @@ void FrameGen::SetState(VideoCore::FrameGenState new_state, VkFormat format) {
     activity = {};
 }
 
+void FrameGen::NoteAmdFrame(bool failed, bool presented, VkFormat format) {
+    if (failed) {
+        SetState(VideoCore::FrameGenState::AmdFrameGenUnavailable, format);
+    } else if (presented) {
+        SetState(VideoCore::FrameGenState::Running, format);
+        generated_frames.fetch_add(1, std::memory_order_relaxed);
+    } else if (state.load(std::memory_order_relaxed) != VideoCore::FrameGenState::Running ||
+               Settings::values.frame_gen_type.GetValue() != built_type) {
+        SetState(VideoCore::FrameGenState::Pending, format);
+    }
+    built_type = Settings::FrameGenType::AmdFsr;
+}
+
 void FrameGen::LogActivity() {
     const auto now = std::chrono::steady_clock::now();
     ++activity.frames;
@@ -427,6 +455,9 @@ size_t FrameGen::WantedGenerations(size_t capacity,
     if (unavailable) {
         plan = {};
         return 0;
+    }
+    if (Settings::values.frame_gen_type.GetValue() == Settings::FrameGenType::AmdFsr) {
+        capacity = std::min(capacity, size_t{1});
     }
     plan = pacer.Plan(capacity, blocked);
     return plan.generations;

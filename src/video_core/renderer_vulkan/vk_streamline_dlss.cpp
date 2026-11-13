@@ -17,6 +17,7 @@
 #include "video_core/dlss_evaluation.h"
 #include "video_core/dlss_mode.h"
 #include "video_core/renderer_base.h"
+#include "video_core/renderer_vulkan/vk_ocarina_camera_pose.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 #include "video_core/vulkan_common/streamline.h"
@@ -116,18 +117,7 @@ VkImageMemoryBarrier Barrier(const StreamlineDlssUpscaler::Image& image, VkAcces
     };
 }
 
-using Matrix4 = std::array<std::array<f64, 4>, 4>;
-using Vector3 = std::array<f64, 3>;
-
-Matrix4 ToMatrix(const std::array<f32, 16>& values) {
-    Matrix4 matrix{};
-    for (size_t row = 0; row < 4; ++row) {
-        for (size_t col = 0; col < 4; ++col) {
-            matrix[row][col] = values[row * 4 + col];
-        }
-    }
-    return matrix;
-}
+using OcarinaCameraMath::ToMatrix;
 
 Matrix4 Multiply(const Matrix4& a, const Matrix4& b) {
     Matrix4 result{};
@@ -179,33 +169,6 @@ std::optional<Matrix4> Invert(const Matrix4& matrix) {
     return result;
 }
 
-f64 Dot(const Vector3& a, const Vector3& b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-f64 Determinant(const std::array<Vector3, 3>& rows) {
-    return rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1]) -
-           rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0]) +
-           rows[0][2] * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0]);
-}
-
-std::optional<Vector3> Normalize(const Vector3& vector) {
-    const f64 length = std::sqrt(Dot(vector, vector));
-    if (!std::isfinite(length) || length < 1e-9) {
-        return std::nullopt;
-    }
-    return Vector3{vector[0] / length, vector[1] / length, vector[2] / length};
-}
-
-/// Takes out of a vector its part along a unit direction.
-Vector3 Without(Vector3 vector, const Vector3& direction) {
-    const f64 amount = Dot(vector, direction);
-    for (size_t i = 0; i < 3; ++i) {
-        vector[i] -= amount * direction[i];
-    }
-    return vector;
-}
-
 /// Streamline's matrices take a row vector: they are the transpose of ours.
 sl::float4x4 ToStreamline(const Matrix4& matrix) {
     sl::float4x4 result;
@@ -237,51 +200,15 @@ bool SetCamera(sl::Constants& constants, const StreamlineDlssUpscaler::Inputs::C
         {0.0, 0.0, 2.0, -1.0},
         {0.0, 0.0, 0.0, 1.0},
     }};
-    Matrix4 view_projection = ToMatrix(camera.view_projection);
-    const f64 scale =
-        std::hypot(view_projection[3][0], view_projection[3][1], view_projection[3][2]);
-    if (!std::isfinite(scale) || scale < 1e-12) {
+    const auto pose = GetOcarinaCameraPose(camera.view_projection);
+    if (!pose) {
         return false;
     }
-    // Clip w is then the distance along the view direction.
-    for (auto& row : view_projection) {
-        for (f64& value : row) {
-            value /= scale;
-        }
-    }
-    const auto axis = [&](size_t row) {
-        return Vector3{view_projection[row][0], view_projection[row][1], view_projection[row][2]};
-    };
-    const Vector3 forward = axis(3);
-    const Vector3 clip_x = axis(0);
-    const Vector3 clip_y = axis(1);
-    // The eye is where clip x, y and w are all zero (Cramer's rule).
-    const std::array<Vector3, 3> system{clip_x, clip_y, forward};
-    const Vector3 rhs{-view_projection[0][3], -view_projection[1][3], -view_projection[3][3]};
-    const f64 det = Determinant(system);
-    if (!std::isfinite(det) || std::abs(det) < 1e-12) {
-        return false;
-    }
-    Vector3 position{};
-    for (size_t column = 0; column < 3; ++column) {
-        std::array<Vector3, 3> replaced = system;
-        for (size_t i = 0; i < 3; ++i) {
-            replaced[i][column] = rhs[i];
-        }
-        position[column] = Determinant(replaced) / det;
-    }
-    const std::optional<Vector3> right = Normalize(Without(clip_x, forward));
-    if (!right) {
-        return false;
-    }
-    const std::optional<Vector3> up = Normalize(Without(Without(clip_y, forward), *right));
-    if (!up) {
-        return false;
-    }
+    const auto& [view_projection, position, right, up, forward, near_plane, far_plane, fov] = *pose;
     const Matrix4 view_to_world{{
-        {(*right)[0], (*up)[0], forward[0], position[0]},
-        {(*right)[1], (*up)[1], forward[1], position[1]},
-        {(*right)[2], (*up)[2], forward[2], position[2]},
+        {right[0], up[0], forward[0], position[0]},
+        {right[1], up[1], forward[1], position[1]},
+        {right[2], up[2], forward[2], position[2]},
         {0.0, 0.0, 0.0, 1.0},
     }};
     const Matrix4 projection = Multiply(TO_ZERO_ONE, Multiply(view_projection, view_to_world));
@@ -293,28 +220,17 @@ bool SetCamera(sl::Constants& constants, const StreamlineDlssUpscaler::Inputs::C
         projection[1][1] <= 0.0) {
         return false;
     }
-    // Depth is (a * z + b) / z: 0 at the near plane, 1 at the far one.
-    const f64 a = projection[2][2];
-    const f64 b = projection[2][3];
-    const f64 near_plane = -b / a;
-    f64 far_plane = b / (1.0 - a);
-    if (!std::isfinite(near_plane) || near_plane <= 0.0) {
-        return false;
-    }
-    if (!std::isfinite(far_plane) || far_plane <= near_plane) {
-        far_plane = near_plane * 100000.0; // an infinite far plane
-    }
     constants.cameraViewToClip = ToStreamline(projection);
     constants.clipToCameraView = ToStreamline(*clip_to_view);
     constants.clipToPrevClip = ToStreamline(clip_to_previous);
     constants.prevClipToClip = ToStreamline(*previous_to_clip);
     constants.cameraPos = ToStreamline(position);
-    constants.cameraRight = ToStreamline(*right);
-    constants.cameraUp = ToStreamline(*up);
+    constants.cameraRight = ToStreamline(right);
+    constants.cameraUp = ToStreamline(up);
     constants.cameraFwd = ToStreamline(forward);
     constants.cameraNear = static_cast<f32>(near_plane);
     constants.cameraFar = static_cast<f32>(far_plane);
-    constants.cameraFOV = static_cast<f32>(2.0 * std::atan(1.0 / projection[1][1]));
+    constants.cameraFOV = static_cast<f32>(fov);
     constants.cameraAspectRatio = static_cast<f32>(projection[1][1] / projection[0][0]);
     return true;
 }

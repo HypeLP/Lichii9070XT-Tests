@@ -453,6 +453,13 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
     }
 #endif
 
+#if !defined(_WIN32) || !defined(HAS_LSFG)
+    if (frame_gen_type_combobox != nullptr) {
+        frame_gen_type_combobox->removeItem(frame_gen_type_combobox->findData(
+            static_cast<u32>(Settings::FrameGenType::AmdFsr)));
+    }
+#endif
+
     for (auto widget : hold_api) {
         api_grid_layout->addWidget(widget);
     }

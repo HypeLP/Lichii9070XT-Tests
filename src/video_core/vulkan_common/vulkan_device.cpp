@@ -494,7 +494,10 @@ namespace {
 /// the emulator's shaders use neither for it.
 bool WantsAmdFsr4(VkDriverId driver_id) {
 #ifdef _WIN32
-    return driver_id == VK_DRIVER_ID_AMD_PROPRIETARY && Settings::values.amd_fsr4.GetValue();
+    const bool frame_generation = Settings::values.frame_gen.GetValue() &&
+                                  Settings::values.frame_gen_type.GetValue() == Settings::FrameGenType::AmdFsr;
+    return driver_id == VK_DRIVER_ID_AMD_PROPRIETARY &&
+           (Settings::values.amd_fsr4.GetValue() || frame_generation);
 #elif defined(__linux__) && !defined(__ANDROID__)
     return driver_id == VK_DRIVER_ID_MESA_RADV && Settings::values.amd_fsr4.GetValue();
 #else

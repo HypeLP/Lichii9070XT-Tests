@@ -24,6 +24,7 @@ struct Api {
     PfnFfxCreateContext create_context{};
     PfnFfxDestroyContext destroy_context{};
     PfnFfxQuery query{};
+    PfnFfxConfigure configure{};
     PfnFfxDispatch dispatch{};
 };
 
@@ -33,5 +34,8 @@ struct Api {
 /// isn't there or doesn't load; null on other systems. The runtime stays loaded while a returned
 /// pointer lives.
 [[nodiscard]] std::shared_ptr<const Api> Acquire();
+#ifdef _WIN32
+[[nodiscard]] std::shared_ptr<const Api> AcquireFrameGeneration();
+#endif
 
 } // namespace Vulkan::FfxRuntime

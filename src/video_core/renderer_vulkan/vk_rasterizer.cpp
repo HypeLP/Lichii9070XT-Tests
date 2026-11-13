@@ -3662,7 +3662,8 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, bool r
                                                    extent, output_extent, target_extent, oot_motion.current,
                                                    oot_motion.previous, mesh, depth.ImageHandle(),
                                                    render_trace_frame, jitter,
-                                                   {depth.size.width, depth.size.height});
+                                                   {depth.size.width, depth.size.height},
+                                                   amd_frame_generation);
         if (!recorded) {
             return fail("temporal upscaler declined the frame");
         }

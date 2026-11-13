@@ -218,6 +218,7 @@ try
     , rasterizer(render_window, gpu, device_memory, device, memory_allocator, state_tracker, scheduler)
 #ifdef HAS_LSFG
     , frame_gen(memory_allocator, scheduler)
+    , amd_frame_generation(device, scheduler, memory_allocator)
 #endif
 {
 
@@ -245,6 +246,9 @@ try
 
 RendererVulkan::~RendererVulkan() {
     scheduler.RegisterOnSubmit([] {});
+#ifdef HAS_LSFG
+    rasterizer.SetAmdFrameGeneration(nullptr);
+#endif
     void(device.GetLogical().WaitIdle());
 }
 
@@ -291,12 +295,29 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
                               present_manager.SwapchainImageCount(), output_format.format, output);
 
 #ifdef HAS_LSFG
+    const bool amd_mode = Settings::values.frame_gen.GetValue() &&
+                          Settings::values.frame_gen_type.GetValue() == Settings::FrameGenType::AmdFsr;
+    const bool amd_output = amd_mode && !output.IsHdr() &&
+                            (frame->image_format == VK_FORMAT_B8G8R8A8_UNORM ||
+                             frame->image_format == VK_FORMAT_R8G8B8A8_UNORM);
+    rasterizer.SetAmdFrameGeneration(amd_output ? &amd_frame_generation : nullptr);
+    amd_frame_generation.SetOutput(amd_output ? VkExtent2D{frame->width, frame->height}
+                                              : VkExtent2D{},
+                                   frame->image_format);
     void(frame_gen.WantedGenerations(present_manager.MaxExtraFrames(),
                                      present_manager.TakeBlockedTime()));
 
     frame_gen.Process(device, frame, frame->image_format, GuestExtent(framebuffers));
 
-    const size_t generated_frames = frame_gen.GeneratedFrameCount();
+    const bool amd_generated =
+        amd_output && amd_frame_generation.Interpolate(*frame->image, rasterizer.OcarinaFrameIndex());
+    const bool present_amd_frame =
+        amd_generated && frame_gen.WantsAmdFrame() && present_manager.MaxExtraFrames() > 0;
+    if (amd_mode) {
+        frame_gen.NoteAmdFrame(amd_frame_generation.Failed(), present_amd_frame, frame->image_format);
+    }
+    const size_t generated_frames = amd_mode ? size_t{present_amd_frame}
+                                             : frame_gen.GeneratedFrameCount();
     // Each generated frame keeps the screen for an equal share of the real frame interval. Sent
     // back to back, a high refresh rate display shows it for one refresh only.
     const auto spacing = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -307,7 +328,11 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
         generated->color_space = output.color_space;
         generated->present_spacing = spacing;
         blit_swapchain.PrepareFrame(device, generated, render_window.GetFramebufferLayout());
-        frame_gen.GenerateInto(device, generated, generation);
+        if (amd_mode) {
+            amd_frame_generation.CopyOutput(*generated->image);
+        } else {
+            frame_gen.GenerateInto(device, generated, generation);
+        }
         scheduler.Flush(*generated->render_ready);
         present_manager.Present(generated);
     }

@@ -155,6 +155,12 @@ public:
     void TiledCacheBarrier() override;
     void FlushCommands() override;
     void TickFrame() override;
+    void SetAmdFrameGeneration(class AmdFrameGeneration* generator) {
+        amd_frame_generation = generator;
+    }
+    [[nodiscard]] u64 OcarinaFrameIndex() const {
+        return render_trace_frame;
+    }
     bool AccelerateConditionalRendering() override;
     bool HasDrawTransformFeedback() override;
     bool AccelerateSurfaceCopy(const Tegra::Engines::Fermi2D::Surface& src,
@@ -377,6 +383,7 @@ private:
         std::array<f32, 4> origin{};
         std::array<f32, 280 * 12> bones{};
     } oot_actor, oot_previous_actor;
+    AmdFrameGeneration* amd_frame_generation{};
     u64 render_trace_frame = 0;
     u32 render_trace_draws = 0;
     u32 render_trace_clears = 0;

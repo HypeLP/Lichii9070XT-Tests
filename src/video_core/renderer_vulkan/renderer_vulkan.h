@@ -14,6 +14,7 @@
 #include "video_core/renderer_base.h"
 #ifdef HAS_LSFG
 #include "video_core/renderer_vulkan/present/frame_gen.h"
+#include "video_core/renderer_vulkan/vk_amd_frame_generation.h"
 #endif
 #include "video_core/renderer_vulkan/vk_blit_screen.h"
 #include "video_core/renderer_vulkan/vk_present_manager.h"
@@ -145,6 +146,7 @@ private:
     RasterizerVulkan rasterizer;
 #ifdef HAS_LSFG
     FrameGen frame_gen;
+    AmdFrameGeneration amd_frame_generation;
 #endif
     std::optional<TurboMode> turbo_mode;
 

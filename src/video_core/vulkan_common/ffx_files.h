@@ -45,6 +45,12 @@ inline constexpr std::array FILES{
          "4a7e895af6e0b615d40a84d59eb8c2b1054ad91cdd0c739567940270d51bdab7"},
 };
 
+inline constexpr File FRAME_GENERATION_FILE{
+    "Kits/FidelityFX/signedbin/amd_fidelityfx_framegeneration_vk.dll",
+    "amd_fidelityfx_framegeneration_vk.dll", 36806928,
+    "d002dabff8c5e71eaa715fc99438cd4dc81230262a7897b16bc402efec3498b4",
+};
+
 /// The user folder's "fidelityfx" folder.
 [[nodiscard]] std::filesystem::path Folder();
 

@@ -34,6 +34,10 @@ public:
                                            std::chrono::steady_clock::duration blocked = {});
 
     [[nodiscard]] size_t GeneratedFrameCount() const;
+    [[nodiscard]] bool WantsAmdFrame() const {
+        return plan.warm && plan.generations != 0;
+    }
+    void NoteAmdFrame(bool failed, bool presented, VkFormat format);
 
     /// The measured time between real frames in seconds, or 0 while it is unknown.
     [[nodiscard]] f32 FrameInterval() const {

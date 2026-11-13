@@ -211,6 +211,9 @@ add_library(video_core STATIC
     renderer_vulkan/vk_compute_pass.h
     renderer_vulkan/vk_fsr3_upscaler.cpp
     renderer_vulkan/vk_fsr3_upscaler.h
+    renderer_vulkan/vk_amd_frame_generation.cpp
+    renderer_vulkan/vk_amd_frame_generation.h
+    renderer_vulkan/vk_ocarina_camera_pose.h
     renderer_vulkan/vk_fsr4_upscaler.cpp
     renderer_vulkan/vk_fsr4_upscaler.h
     vulkan_common/ffx_files.h
