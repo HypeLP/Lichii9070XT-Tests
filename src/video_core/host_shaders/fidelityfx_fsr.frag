@@ -38,6 +38,14 @@ layout(set=0,binding=0) uniform sampler2D InputTexture;
 #define A_GLSL 1
 #define FSR_RCAS_PASSTHROUGH_ALPHA 1
 
+#if USE_RCAS
+// RCAS samples neighbours outside the image at its edges. texelFetch ignores the sampler.
+vec4 LoadRcas(ivec2 pixel) {
+    ivec2 last = textureSize(InputTexture, 0) - ivec2(1);
+    return texelFetch(InputTexture, clamp(pixel, ivec2(0), last), 0);
+}
+#endif
+
 #ifndef LICHII_USE_FP16
     #include "ffx_a.h"
 
@@ -49,7 +57,7 @@ layout(set=0,binding=0) uniform sampler2D InputTexture;
     #endif
     #if USE_RCAS
         #define FSR_RCAS_F 1
-        AF4 FsrRcasLoadF(ASU2 p) { return texelFetch(InputTexture, ASU2(p), 0); }
+        AF4 FsrRcasLoadF(ASU2 p) { return LoadRcas(p); }
         void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {}
     #endif
 #else
@@ -64,7 +72,7 @@ layout(set=0,binding=0) uniform sampler2D InputTexture;
     #endif
     #if USE_RCAS
         #define FSR_RCAS_H 1
-        AH4 FsrRcasLoadH(ASW2 p) { return AH4(texelFetch(InputTexture, ASU2(p), 0)); }
+        AH4 FsrRcasLoadH(ASW2 p) { return AH4(LoadRcas(ivec2(p))); }
         void FsrRcasInputH(inout AH1 r,inout AH1 g,inout AH1 b){}
     #endif
 #endif

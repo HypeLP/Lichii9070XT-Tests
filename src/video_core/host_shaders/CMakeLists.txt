@@ -176,6 +176,10 @@ foreach(SOURCE_FILE IN ITEMS ${SHADER_FILES})
     # Skip compiling to SPIR-V OpenGL exclusive files
     if (NOT ${FILENAME} MATCHES "opengl.*")
         set(SPIRV_DEPENDENCIES)
+        if (FILENAME MATCHES "^vulkan_fidelityfx_fsr_(easu|rcas)_.*[.]frag$")
+            list(APPEND SPIRV_DEPENDENCIES ${CMAKE_CURRENT_SOURCE_DIR}/fidelityfx_fsr.frag
+                 ${FIDELITYFX_FILES})
+        endif()
         if (FILENAME STREQUAL "convert_abgr8_to_x8d24.frag" OR
             FILENAME STREQUAL "convert_x8d24_to_abgr8.frag")
             list(APPEND SPIRV_DEPENDENCIES ${CMAKE_CURRENT_SOURCE_DIR}/x8d24_conversion.glsl)
