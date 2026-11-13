@@ -4,6 +4,7 @@
 #include "video_core/renderer_vulkan/vk_amd_frame_generation.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <string_view>
@@ -80,7 +81,7 @@ struct AmdFrameGeneration::Impl {
     std::optional<u64> previous;
     Clock::time_point last_time{};
     bool reset{};
-    bool failed{};
+    std::atomic_bool failed{};
     bool generated{};
 
     Impl(const Device& device_, Scheduler& scheduler_, MemoryAllocator& allocator_)
@@ -303,7 +304,8 @@ void AmdFrameGeneration::Prepare([[maybe_unused]] VkImage depth, [[maybe_unused]
 
     state.scheduler.RequestOutsideRenderPassOperationContext();
     state.scheduler.Record([&state, config, prepare, depth, motion](vk::CommandBuffer cmdbuf) {
-        if (!state.Check(state.api->configure(&state.context, &config.header), "configure")) {
+        if (state.failed ||
+            !state.Check(state.api->configure(&state.context, &config.header), "configure")) {
             return;
         }
         const std::array before{
@@ -326,8 +328,6 @@ void AmdFrameGeneration::Prepare([[maybe_unused]] VkImage depth, [[maybe_unused]
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, {}, {}, after);
     });
-    // The worker records Vulkan commands here. The GPU is not waited on.
-    state.scheduler.WaitWorker();
     state.scheduler.InvalidateState();
 #endif
 }
@@ -341,6 +341,9 @@ bool AmdFrameGeneration::Interpolate([[maybe_unused]] VkImage color, [[maybe_unu
     state.prepared.reset();
     state.scheduler.RequestOutsideRenderPassOperationContext();
     state.scheduler.Record([&state, color, frame](vk::CommandBuffer cmdbuf) {
+        if (state.failed) {
+            return;
+        }
         const std::array before{
             Barrier(color, COLOR, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
