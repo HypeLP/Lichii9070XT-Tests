@@ -15,3 +15,11 @@ The FFX API headers from AMD's FidelityFX SDK 2.4.0, used by
 AMD's signed runtime DLLs are not part of this repository or of any Lichii package. Users
 download them from the same SDK commit in the Graphics settings; see
 `src/video_core/vulkan_common/ffx_files.h`.
+
+On the experimental Windows branch, `AMD FSR Frame Generation (experimental)`
+uses Frame Generation 3.1.6 for Ocarina of Time in Vulkan SDR. The scaling filter
+can remain FSR 3.1 independently. The Graphics settings download installs the
+loader and upscaler. Download `amd_fidelityfx_framegeneration_vk.dll` from
+`Kits/FidelityFX/signedbin` at the same SDK commit and place it beside the loader
+in the Lichii profile's `fidelityfx` folder. Lichii checks its SHA-256 and AMD
+signature before use.

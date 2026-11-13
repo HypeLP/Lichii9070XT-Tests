@@ -144,10 +144,10 @@ struct AmdFrameGeneration::Impl {
             return false;
         }
         const auto provider = std::ranges::find_if(names, [](const char* name) {
-            return name && std::string_view{name}.starts_with("4.");
+            return name && std::string_view{name} == "3.1.6";
         });
         if (provider == names.end()) {
-            LOG_WARNING(Render_Vulkan, "AMD FSR Frame Generation: no 4.x provider available");
+            LOG_WARNING(Render_Vulkan, "AMD FSR Frame Generation: no 3.1.6 provider available");
             return false;
         }
         ffxCreateBackendVKDesc backend{};
