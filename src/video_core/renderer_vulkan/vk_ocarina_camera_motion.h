@@ -42,8 +42,6 @@ public:
     ~OcarinaUpscaler();
 
     [[nodiscard]] bool EvaluationFailed() const;
-    /// Save the 1440p temporal scene copy before the game adds its HUD.
-    void SaveSceneReference(VkImageView color);
     /// Composite the HUD from the guest image over the matching 4K scene.
     void Composite4k(VkImageView native_composite, u64 frame);
     /// Copy the scene colour once the fog is drawn, before the glows and particles that have no
@@ -61,9 +59,11 @@ public:
                 VkExtent2D output_extent, VkExtent2D target_extent, const std::array<f32, 16>& current,
                 const std::array<f32, 16>& previous, const OcarinaActorMesh& mesh,
                 VkImage depth_image, u64 frame, std::array<f32, 2> jitter = {},
-                VkExtent2D depth_extent = {}, AmdFrameGeneration* frame_generation = nullptr);
+                VkExtent2D depth_extent = {}, AmdFrameGeneration* frame_generation = nullptr,
+                VkImageView scene_reference = VK_NULL_HANDLE);
 
 private:
+    void SaveSceneReference(VkImageView color, VkExtent2D extent);
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

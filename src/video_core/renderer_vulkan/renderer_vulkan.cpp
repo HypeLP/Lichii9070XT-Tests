@@ -300,10 +300,15 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     const bool amd_output = amd_mode && !output.IsHdr() &&
                             (frame->image_format == VK_FORMAT_B8G8R8A8_UNORM ||
                              frame->image_format == VK_FORMAT_R8G8B8A8_UNORM);
+    const auto& screen = render_window.GetFramebufferLayout().screen;
+    const VkRect2D game_area{
+        {static_cast<s32>(screen.left), static_cast<s32>(screen.top)},
+        {screen.GetWidth(), screen.GetHeight()},
+    };
     rasterizer.SetAmdFrameGeneration(amd_output ? &amd_frame_generation : nullptr);
     amd_frame_generation.SetOutput(amd_output ? VkExtent2D{frame->width, frame->height}
                                               : VkExtent2D{},
-                                   frame->image_format);
+                                   frame->image_format, game_area);
     void(frame_gen.WantedGenerations(present_manager.MaxExtraFrames(),
                                      present_manager.TakeBlockedTime()));
 
@@ -330,7 +335,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
         generated->generated = true;
         blit_swapchain.PrepareFrame(device, generated, render_window.GetFramebufferLayout());
         if (amd_mode) {
-            amd_frame_generation.CopyOutput(*generated->image);
+            amd_frame_generation.CopyOutput(*generated->image, *frame->image);
         } else {
             frame_gen.GenerateInto(device, generated, generation);
         }

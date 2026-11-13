@@ -3639,8 +3639,9 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, bool r
     try {
         const auto target_view =
             target.StorageView(Shader::TextureType::Color2D, Shader::ImageFormat::Typeless, false);
-        const auto scene_reference = upscale_4k ? target.Handle(Shader::TextureType::Color2D)
-                                                : VK_NULL_HANDLE;
+        const bool capture_scene = upscale_4k || amd_frame_generation != nullptr;
+        const auto scene_reference = capture_scene ? target.Handle(Shader::TextureType::Color2D)
+                                                   : VK_NULL_HANDLE;
         if (!target_view || (upscale_4k && !scene_reference)) {
             return fail("no upscale target view");
         }
@@ -3663,12 +3664,11 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, bool r
                                                    oot_motion.previous, mesh, depth.ImageHandle(),
                                                    render_trace_frame, jitter,
                                                    {depth.size.width, depth.size.height},
-                                                   amd_frame_generation);
+                                                   amd_frame_generation, scene_reference);
         if (!recorded) {
             return fail("temporal upscaler declined the frame");
         }
         if (upscale_4k) {
-            oot_live_dlss->SaveSceneReference(scene_reference);
             oot_4k_scene_frame = render_trace_frame;
             oot_4k_guest_present = VK_NULL_HANDLE;
         }

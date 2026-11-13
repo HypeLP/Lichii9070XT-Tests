@@ -28,6 +28,7 @@ namespace Vulkan {
 namespace {
 constexpr VkImageSubresourceRange COLOR{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 constexpr VkImageSubresourceRange DEPTH{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+constexpr VkFormat SCENE_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr u32 STANDALONE = FFX_FRAMEGENERATION_FLAG_NO_SWAPCHAIN_CONTEXT_NOTIFY;
 
 VkImageMemoryBarrier Barrier(VkImage image, VkImageSubresourceRange range, VkImageLayout from,
@@ -72,6 +73,8 @@ struct AmdFrameGeneration::Impl {
     std::shared_ptr<const FfxRuntime::Api> api;
     ffxContext context{};
     vk::Image output;
+    vk::Image hudless;
+    VkRect2D game_area{};
     VkExtent2D display{};
     VkExtent2D render{};
     VkExtent2D configured_display{};
@@ -83,6 +86,11 @@ struct AmdFrameGeneration::Impl {
     bool reset{};
     std::atomic_bool failed{};
     bool generated{};
+
+    FfxApiRect2D GenerationRect() const {
+        return {game_area.offset.x, game_area.offset.y, static_cast<s32>(game_area.extent.width),
+                static_cast<s32>(game_area.extent.height)};
+    }
 
     Impl(const Device& device_, Scheduler& scheduler_, MemoryAllocator& allocator_)
         : device{device_}, scheduler{scheduler_}, allocator{allocator_} {}
@@ -98,6 +106,7 @@ struct AmdFrameGeneration::Impl {
             context = nullptr;
         }
         output = {};
+        hudless = {};
         prepared.reset();
         previous.reset();
     }
@@ -160,7 +169,11 @@ struct AmdFrameGeneration::Impl {
         override_version.versionId = ids[static_cast<size_t>(provider - names.begin())];
         ffxCreateContextDescFrameGenerationVersion version{};
         version.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION_VERSION;
-        version.header.pNext = &override_version.header;
+        ffxCreateContextDescFrameGenerationHudless scene_format{};
+        scene_format.header = {FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION_HUDLESS,
+                               &override_version.header};
+        scene_format.hudlessBackBufferFormat = ffxApiGetSurfaceFormatVK(SCENE_FORMAT);
+        version.header.pNext = &scene_format.header;
         version.version = FFX_FRAMEGENERATION_VERSION;
         ffxCreateContextDescFrameGeneration create{};
         create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION;
@@ -172,8 +185,15 @@ struct AmdFrameGeneration::Impl {
             return false;
         }
 
+        if (!device.IsFormatSupported(SCENE_FORMAT,
+                                      VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+                                          VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT,
+                                      FormatType::Optimal)) {
+            LOG_WARNING(Render_Vulkan, "AMD FSR Frame Generation: HUD-less blit unsupported");
+            return false;
+        }
         try {
-            output = allocator.CreateImage({
+            const VkImageCreateInfo image_info{
                 .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                 .imageType = VK_IMAGE_TYPE_2D,
                 .format = format,
@@ -186,19 +206,34 @@ struct AmdFrameGeneration::Impl {
                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            });
+            };
+            output = allocator.CreateImage(image_info);
+            VkImageCreateInfo scene_info = image_info;
+            scene_info.format = SCENE_FORMAT;
+            scene_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            hudless = allocator.CreateImage(scene_info);
         } catch (const vk::Exception& error) {
             LOG_ERROR(Render_Vulkan, "AMD FSR Frame Generation: output allocation failed ({})",
                       error.what());
             return false;
         }
         scheduler.RequestOutsideRenderPassOperationContext();
-        scheduler.Record([image = *output](vk::CommandBuffer cmdbuf) {
-            const std::array barriers{Barrier(image, COLOR, VK_IMAGE_LAYOUT_UNDEFINED,
-                                              VK_IMAGE_LAYOUT_GENERAL, 0,
-                                              VK_ACCESS_SHADER_WRITE_BIT)};
+        scheduler.Record([image = *output, scene = *hudless](vk::CommandBuffer cmdbuf) {
+            const std::array barriers{
+                Barrier(image, COLOR, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                        0, VK_ACCESS_SHADER_WRITE_BIT),
+                Barrier(scene, COLOR, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        0, VK_ACCESS_TRANSFER_WRITE_BIT),
+            };
             cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, {}, {}, barriers);
+                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   0, {}, {}, barriers);
+            cmdbuf.ClearColorImage(scene, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, {}, COLOR);
+            cmdbuf.PipelineBarrier(
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, {}, {},
+                Barrier(scene, COLOR, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                        VK_ACCESS_SHADER_READ_BIT));
         });
         render = render_extent;
         configured_display = display;
@@ -223,10 +258,13 @@ AmdFrameGeneration::AmdFrameGeneration([[maybe_unused]] const Device& device,
 AmdFrameGeneration::~AmdFrameGeneration() = default;
 
 void AmdFrameGeneration::SetOutput([[maybe_unused]] VkExtent2D extent,
-                                   [[maybe_unused]] VkFormat format) {
+                                   [[maybe_unused]] VkFormat format,
+                                   [[maybe_unused]] VkRect2D game_area) {
 #ifdef _WIN32
     auto& state = *impl;
-    if (!SameExtent(extent, state.display) || format != state.format) {
+    if (!SameExtent(extent, state.display) || format != state.format ||
+        !SameExtent(game_area.extent, state.game_area.extent) ||
+        game_area.offset.x != state.game_area.offset.x || game_area.offset.y != state.game_area.offset.y) {
         state.prepared.reset();
         state.previous.reset();
         if (extent.width == 0 || extent.height == 0) {
@@ -235,6 +273,7 @@ void AmdFrameGeneration::SetOutput([[maybe_unused]] VkExtent2D extent,
     }
     state.display = extent;
     state.format = format;
+    state.game_area = game_area;
 #endif
 }
 
@@ -242,12 +281,18 @@ void AmdFrameGeneration::Prepare([[maybe_unused]] VkImage depth, [[maybe_unused]
                                  [[maybe_unused]] VkExtent2D render_extent,
                                  [[maybe_unused]] const std::array<f32, 16>& view_projection,
                                  [[maybe_unused]] std::array<f32, 2> jitter,
-                                 [[maybe_unused]] u64 frame, [[maybe_unused]] bool reset) {
+                                 [[maybe_unused]] u64 frame, [[maybe_unused]] bool reset,
+                                 [[maybe_unused]] VkImage scene,
+                                 [[maybe_unused]] VkExtent2D scene_extent) {
 #ifdef _WIN32
     auto& state = *impl;
     state.prepared.reset();
-    if (state.failed || !state.display.width || !state.display.height ||
-        render_extent.width > state.display.width || render_extent.height > state.display.height ||
+    const auto area = state.game_area;
+    if (state.failed || !scene || !area.extent.width || !area.extent.height ||
+        area.offset.x < 0 || area.offset.y < 0 ||
+        u64{static_cast<u32>(area.offset.x)} + area.extent.width > state.display.width ||
+        u64{static_cast<u32>(area.offset.y)} + area.extent.height > state.display.height ||
+        render_extent.width > area.extent.width || render_extent.height > area.extent.height ||
         (state.format != VK_FORMAT_B8G8R8A8_UNORM && state.format != VK_FORMAT_R8G8B8A8_UNORM)) {
         return;
     }
@@ -276,7 +321,9 @@ void AmdFrameGeneration::Prepare([[maybe_unused]] VkImage depth, [[maybe_unused]
     config.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
     config.frameGenerationEnabled = true;
     config.flags = STANDALONE;
-    config.generationRect = {0, 0, static_cast<s32>(state.display.width), static_cast<s32>(state.display.height)};
+    config.generationRect = state.GenerationRect();
+    config.HUDLessColor = Resource(*state.hudless, SCENE_FORMAT, state.display, 0,
+                                   FFX_API_RESOURCE_STATE_COMPUTE_READ);
     config.frameID = frame;
 
     ffxDispatchDescFrameGenerationPrepareV2 prepare{};
@@ -303,11 +350,41 @@ void AmdFrameGeneration::Prepare([[maybe_unused]] VkImage depth, [[maybe_unused]
     std::ranges::copy(pose->forward, prepare.cameraForward);
 
     state.scheduler.RequestOutsideRenderPassOperationContext();
-    state.scheduler.Record([&state, config, prepare, depth, motion](vk::CommandBuffer cmdbuf) {
+    state.scheduler.Record([&state, config, prepare, depth, motion, scene, scene_extent,
+                            area, hudless = *state.hudless](vk::CommandBuffer cmdbuf) {
         if (state.failed ||
             !state.Check(state.api->configure(&state.context, &config.header), "configure")) {
             return;
         }
+        const std::array blit_before{
+            Barrier(scene, COLOR, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
+            Barrier(hudless, COLOR, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                    VK_ACCESS_TRANSFER_WRITE_BIT),
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, {}, {}, blit_before);
+        const VkImageBlit region{
+            .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .srcOffsets = {{0, 0, 0}, {static_cast<s32>(scene_extent.width),
+                                       static_cast<s32>(scene_extent.height), 1}},
+            .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .dstOffsets = {{area.offset.x, area.offset.y, 0},
+                           {area.offset.x + static_cast<s32>(area.extent.width),
+                            area.offset.y + static_cast<s32>(area.extent.height), 1}},
+        };
+        cmdbuf.BlitImage(scene, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hudless,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_LINEAR);
+        const std::array blit_after{
+            Barrier(scene, COLOR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                    VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT),
+            Barrier(hudless, COLOR, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_ACCESS_SHADER_READ_BIT),
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               0, {}, {}, blit_after);
         const std::array before{
             Barrier(depth, DEPTH, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
@@ -363,7 +440,7 @@ bool AmdFrameGeneration::Interpolate([[maybe_unused]] VkImage color, [[maybe_unu
         dispatch.numGeneratedFrames = 1;
         dispatch.reset = state.reset;
         dispatch.backbufferTransferFunction = FFX_API_BACKBUFFER_TRANSFER_FUNCTION_SRGB;
-        dispatch.generationRect = {0, 0, static_cast<s32>(state.display.width), static_cast<s32>(state.display.height)};
+        dispatch.generationRect = state.GenerationRect();
         dispatch.frameID = frame;
         state.Check(state.api->dispatch(&state.context, &dispatch.header), "interpolate");
         const std::array after{
@@ -389,11 +466,13 @@ bool AmdFrameGeneration::Interpolate([[maybe_unused]] VkImage color, [[maybe_unu
 #endif
 }
 
-void AmdFrameGeneration::CopyOutput([[maybe_unused]] VkImage destination) {
+void AmdFrameGeneration::CopyOutput([[maybe_unused]] VkImage destination,
+                                    [[maybe_unused]] VkImage real_frame) {
 #ifdef _WIN32
     auto& state = *impl;
-    state.scheduler.Record([source = *state.output, destination, extent = state.display](
-                               vk::CommandBuffer cmdbuf) {
+    state.scheduler.Record([source = *state.output, destination, real_frame,
+                            extent = state.display, area = state.game_area](vk::CommandBuffer cmdbuf) {
+        const bool has_margins = !SameExtent(extent, area.extent);
         const std::array before{
             Barrier(source, COLOR, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
@@ -402,11 +481,31 @@ void AmdFrameGeneration::CopyOutput([[maybe_unused]] VkImage destination) {
         };
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, {}, {}, before);
-        const VkImageCopy region{
-            .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-            .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-            .extent = {extent.width, extent.height, 1},
-        };
+        const VkImageSubresourceLayers layer{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        if (has_margins) {
+            // SDK output outside generationRect is not defined. Keep the real frame's margins.
+            cmdbuf.PipelineBarrier(
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, {}, {},
+                Barrier(real_frame, COLOR, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT));
+            const VkImageCopy full{layer, {}, layer, {}, {extent.width, extent.height, 1}};
+            cmdbuf.CopyImage(real_frame, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, full);
+            const VkMemoryBarrier copied{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            };
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   0, copied);
+            cmdbuf.PipelineBarrier(
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, {}, {},
+                Barrier(real_frame, COLOR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                        VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT));
+        }
+        const VkOffset3D offset{area.offset.x, area.offset.y, 0};
+        const VkImageCopy region{layer, offset, layer, offset,
+                                 {area.extent.width, area.extent.height, 1}};
         cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
         const std::array after{

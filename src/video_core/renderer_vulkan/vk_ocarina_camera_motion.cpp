@@ -792,6 +792,7 @@ struct OcarinaUpscaler::Impl {
     Matrix last_view_projection{};
     vk::Image native_scene;
     vk::ImageView native_scene_view;
+    VkExtent2D native_scene_extent{};
     vk::Image composite;
     vk::ImageView composite_view;
     std::unique_ptr<OcarinaColorPass> reference_pass;
@@ -831,14 +832,22 @@ bool OcarinaUpscaler::EvaluationFailed() const {
     return impl->Failed();
 }
 
-void OcarinaUpscaler::SaveSceneReference(VkImageView color) {
+void OcarinaUpscaler::SaveSceneReference(VkImageView color, VkExtent2D extent) {
     auto& state = *impl;
-    constexpr VkExtent2D extent{2560, 1440};
-    if (!state.native_scene_view) {
+    if (state.native_scene_extent.width != extent.width ||
+        state.native_scene_extent.height != extent.height) {
+        if (state.native_scene_view) {
+            state.scheduler.Finish();
+            state.native_scene_view = {};
+        }
         constexpr VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
         state.native_scene = CreateOcarinaImage(state.allocator, extent, format,
-                                               VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+                                               VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         state.native_scene_view = CreateOcarinaView(state.device, *state.native_scene, format);
+        state.native_scene_extent = extent;
+    }
+    if (!state.reference_pass) {
         state.reference_pass = std::make_unique<OcarinaColorPass>(
             state.device, state.scheduler, state.pool, OCARINA_DLSS_4K_REFERENCE_COMP_SPV);
     }
@@ -936,7 +945,8 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
                             const Matrix& current, const Matrix& previous,
                             const OcarinaActorMesh& mesh, VkImage depth_image, u64 frame,
                             std::array<f32, 2> jitter, [[maybe_unused]] VkExtent2D depth_extent,
-                            [[maybe_unused]] AmdFrameGeneration* frame_generation) {
+                            [[maybe_unused]] AmdFrameGeneration* frame_generation,
+                            VkImageView scene_reference) {
     auto& state = *impl;
     if (state.last_frame == frame || state.Failed()) {
         return false;
@@ -1098,15 +1108,10 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
         }
     }
 #ifdef _WIN32
-    if (frame_generation && depth_extent.width == extent.width &&
-        depth_extent.height == extent.height) {
-        frame_generation->Prepare(depth_image, *resources.motion, extent, current, jitter, frame,
-                                  reset);
-    }
+    const bool capture_scene_for_fg = frame_generation && depth_extent.width == extent.width &&
+                                      depth_extent.height == extent.height;
 #endif
     state.output_fsr4 = used_fsr4;
-    // A resize can submit the inputs before recording evaluation, so keep the later tick.
-    resources.tick = state.scheduler.CurrentTick();
     if (target) {
         state.queue.Acquire(state.scheduler, 2);
         const bool same_size = output_extent.width == target_extent.width &&
@@ -1118,6 +1123,16 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
                                         target_extent, frame, reset);
     }
     state.scheduler.InvalidateState();
+    if (scene_reference) {
+        SaveSceneReference(scene_reference, target_extent);
+    }
+#ifdef _WIN32
+    if (capture_scene_for_fg && scene_reference) {
+        frame_generation->Prepare(depth_image, *resources.motion, extent, current, jitter, frame,
+                                  reset, *state.native_scene, target_extent);
+    }
+#endif
+    resources.tick = state.scheduler.CurrentTick();
     state.last_frame = frame;
     state.last_view_projection = current;
     return true;

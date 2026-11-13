@@ -20,12 +20,12 @@ public:
     AmdFrameGeneration(const Device& device, Scheduler& scheduler, MemoryAllocator& allocator);
     ~AmdFrameGeneration();
 
-    void SetOutput(VkExtent2D extent, VkFormat format);
+    void SetOutput(VkExtent2D extent, VkFormat format, VkRect2D game_area = {});
     void Prepare(VkImage depth, VkImage motion, VkExtent2D render_extent,
                  const std::array<f32, 16>& view_projection, std::array<f32, 2> jitter, u64 frame,
-                 bool reset);
+                 bool reset, VkImage scene, VkExtent2D scene_extent);
     [[nodiscard]] bool Interpolate(VkImage color, u64 frame);
-    void CopyOutput(VkImage destination);
+    void CopyOutput(VkImage destination, VkImage real_frame);
     [[nodiscard]] bool Failed() const;
 
 private:
